@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-FIN_VERSION=1.6.0
+FIN_VERSION=1.7.0
 
 # Console colors
 red='\033[0;91m'
@@ -827,14 +827,7 @@ cleanup ()
 	_remove_dangling_volumes
 
 	# TODO: remove below lines in September 2017
-	rm -f "$OLD_CONFIG_DIR/Vagrantfile."* >/dev/null 2>&1
-	rm -f "$OLD_CONFIG_DIR/backups/Vagrantfile."* >/dev/null 2>&1
-	rm -r "$OLD_CONFIG_DIR/backups" >/dev/null 2>&1
-	rm -f "$OLD_CONFIG_DIR/vagrant.yml."* >/dev/null 2>&1
-	rm -f "$OLD_CONFIG_DIR/backups/vagrant.yml."* >/dev/null 2>&1
-	rm -f "$OLD_CONFIG_DIR/b2d_version" >/dev/null 2>&1
-
-	# TODO: remove in September 2017
+	rm -rf "$OLD_CONFIG_DIR/" >/dev/null 2>&1
 	rm -f "$CONFIG_DIR/last_check" >/dev/null 2>&1
 }
 
@@ -908,9 +901,8 @@ show_help ()
 		fi
 	fi
 
-	printh "Docksal Fin v$FIN_VERSION command reference" "" "green"
+	printh "Docksal Fin v$FIN_VERSION commands:" "" "green"
 
-	echo
 	if is_linux; then
 		printh "start (up)" "Start project services"
 	else
@@ -921,18 +913,20 @@ show_help ()
 	printh "reset" "Recreate project services and containers (${yellow}fin help reset${NC})"
 	printh "remove (rm)" "Stop project services and remove their containers (${yellow}fin help remove${NC})"
 	printh "status (ps)" "List project services"
+	printh "logs [service]" "Show service logs (e.g. Apache logs, MySQL logs)"
+	printh "config [command]" "Show project configuration (See ${yellow}fin help config${NC} for generate)"
 
 	echo
+	printh "db <command>" "DB commands: import, dump, list, cli (${yellow}fin help db${NC})" "yellow"
+	printh "project <command>" "Projects management commands: list, create (${yellow}fin help project${NC})" "yellow"
 	if ! is_linux && ! is_docker_native; then
-		printh "vm <command>" "Docksal's Virtualbox machine commands (${yellow}fin help vm${NC})" "yellow"
-		printh "  start, stop, restart, status, ls, ssh, remove, ip, env, ram, stats"
+		printh "vm <command>" "VM commands: start, stop, restart and more. See ${yellow}fin help vm${NC}" "yellow"
 	fi
 
 	echo
 	printh "bash [service]" "Open shell into service's container. Defaults to ${yellow}cli${NC}"
-	printh "exec <command|file>" "Execute a command or a file in ${yellow}cli${NC}"
-	printh "exec-url <url>" "Download script from URL and run it on host (URL should be public)"
-	printh "logs [service]" "Show Docker logs for service container (e.g. Apache logs)"
+	printh "exec <command|file>" "Execute a command or a script in ${yellow}cli${NC}"
+	printh "ssh-add [-lD] [key]" "Adds ssh private key to the authentication agent (${yellow}fin help ssh-add${NC})"
 
 	echo
 	printh "drush [command]" "Execute Drush command (Drupal)"
@@ -940,30 +934,15 @@ show_help ()
 	printh "wp [command]" "Execute WP-CLI command (WordPress)"
 
 	echo
-	printh "sqlc" "Opens mysql shell to current project database (${yellow}fin help sqlc${NC})"
-	printh "sqls" "Show list of available databases (${yellow}fin help sqls${NC})"
-	printh "sqld [file]" "Dump the database into a file (${yellow}fin help sqld${NC})"
-	printh "sqli [file]" "Truncate the database and import from sql dump (${yellow}fin help sqli${NC})"
-
-	echo
-	printh "image <command>" "Image management" "yellow"
-	printh "  save, load, registry" "See ${yellow}fin help image${NC} for details"
-
-	echo
-	printh "project <command>" "Project management" "yellow"
-	printh "  list, create" "See ${yellow}fin help project${NC} for details"
-
-	echo
-	printh "ssh-add [-lD] [key]" "Adds private key identities to the authentication agent (${yellow}fin help ssh-add${NC})"
-	printh "cleanup [--hard]" "Remove unused docker images and projects that are no longer present"
-
-	echo
-	printh "config" "Display/generate project configuration (${yellow}fin help config${NC})"
+	printh "share" "Create temporary public url for current project using ngrok"
+	printh "alias" "Manage aliases that allow ${yellow}fin @alias${NC} execution (${yellow}fin help alias${NC})"
+	printh "exec-url <url>" "Download script from URL and run it on host (URL should be public)"
 	printh "run-cli (rc) <command>" "Run a command in a standalone cli container in the current directory"
-	printh "share" "Share web server of the current project on the internet using ngrok"
+	printh "image <command>" "Image management commands: registry, save, load (${yellow}fin help image${NC})"
+	printh "cleanup [--hard]" "Remove unused Docker images and projects (saves disk space)"
+	printh "hosts <command>" "Hosts file commands: add, remove, list (${yellow}fin help hosts${NC})"
 	printh "sysinfo" "Show diagnostics information for bug reporting"
-	printh "alias" "Create/remove folder aliases (${yellow}fin help alias${NC})"
-	printh "version (v, -v)" "Print fin version. [v, -v] - prints short version"
+	printh "version (v, -v)" "Print fin version. [v, -v] prints short version"
 	printh "update" "${yellow}Update Docksal${NC}" "yellow"
 
 	# Show list of custom commands and their help if available
@@ -991,12 +970,15 @@ show_help_list_of_custom_commands ()
 
 	custom_commands_list=$(ls "$_path" 2>/dev/null | tr "\n" " ")
 	if [ ! -z "$custom_commands_list" ]; then
+		local word
+		[ "$1" == 'project' ] && word='Project' || word='Global'
 		echo
-		echo -e "Custom commands found in ${yellow}$1 commands${NC}:";
+		echo-green "  $word addons:";
 		for cmd_name in $(ls "$_path")
 		do
 			# command description is lines that start with ##
 			local cmd_desc=$(cat "$_path/$cmd_name" | grep '^##' | sed "s/^##[ ]*//g" | head -1 --)
+			cmd_desc="${cmd_desc:-No description}"
 			printh "$cmd_name" "$cmd_desc"
 		done
 	fi
@@ -1074,17 +1056,19 @@ show_help_image() {
 	echo-green "Image management"
 	printh "fin image <command>" "" "yellow"
 	echo
-	printh "save [--system|--project|--all]" "Save docker images into a tar archive."
-	printh "load <file>" "Load docker images from a tar archive."
-	echo
+	echo-green "Commands:"
 	printh "registry" "Show all Docksal images on Docker Hub"
 	printh "registry [image name]" "Show all tags for a certain image"
 	echo
+	printh "save [--system|--project|--all]" "Save docker images into a tar archive."
+	printh "load <file>" "Load docker images from a tar archive."
+	echo
 	echo-green "Examples:"
+	printh "fin image registry" "Show all available Docksal images on Docker Hub"
+	printh "fin image registry docksal/db" "Show all tags for docksal/db image"
 	printh "fin image save --system" "Save Docksal system images."
 	printh "fin image save --project" "Save current project's images."
 	printh "fin image save --all" "Save all images available on the host."
-	printh "fin image registry docksal/db" "Show all tags for docksal/db image"
 	echo
 }
 
@@ -1092,11 +1076,13 @@ show_help_project() {
 	echo-green "Project management"
 	printh "fin project <command>" "" "yellow"
 	echo
+	echo-green "Commands:"
 	printh "list (pl) [-a (--all)]" "List running Docksal projects (-a to show stopped as well)"
 	printh "create" "Create and install new Drupal, Wordpress or Magento project."
 	echo
 	echo-green "Examples:"
 	printh "fin pl -a" "List all known Docksal projects, including stopped ones"
+	printh "fin project create" "Start project wizard"
 	echo
 }
 
@@ -1187,6 +1173,33 @@ show_help_mysql-dump ()
 	show_help_sqld
 }
 
+show_help_db ()
+{
+	echo-green "Database related commands"
+	printh "fin db <command>" "" "yellow"
+	echo
+	echo-green "Commands:"
+	printh "import [file]" "Truncate the database and import from sql dump file or stdin"
+	printh "dump [file]" "Dump the database into a file or stdout"
+	printh "list (ls)" "Show list of available databases"
+	printh "cli" "Opens command line interface to MySQL server"
+	echo
+	echo-green "Parameters:"
+	printh "--db=drupal" "Use another database (default is the one set with 'MYSQL_DATABASE')"
+	printh "--db-user=admin" "Use another mysql username (default is 'root')"
+	printh "--db-password=p4\$\$" "Use another database password (default is the one set with 'MYSQL_ROOT_PASSWORD', see ${yellow}fin config${NC})"
+	echo
+	echo-green "Examples:"
+	printh "fin db import ~/dump.sql" "Import from dump.sql file"
+	printh "cat dump.sql | fin db import" "Import dump from stdin into default database"
+	printh "fin db dump ~/dump.sql" "Export default database into dump.sql"
+	printh "fin db dump --db=drupal" "Export database 'drupal' dump into stdout"
+	printh "fin db" "Opens command line interface"
+	printh "fin db ls" "List databases"
+	printh "fin db dump --db=mysql --db-user=root --db-password=root mysql.sql    Export mysql database as root into mysql.sql"
+	echo
+}
+
 show_help_vm ()
 {
 	echo-green "Control docker machine directly"
@@ -1229,7 +1242,7 @@ show_help_alias ()
 	printh "fin alias ~/site1/docroot dev" "Create alias ${yellow}dev${NC} that is linked to ${yellow}~/site1/docroot${NC}"
 	printh "fin @dev drush st" "Execute 'drush st' command in directory linked by ${yellow}dev${NC} alias"
 	printh "" "Hint: create alias to Drupal sub-site folder to launch subsite targeted commands"
-	printh "fin alias remove dev"	"Delete ${yellow}dev${NC} alias"
+	printh "fin alias remove dev" "Delete ${yellow}dev${NC} alias"
 	echo
 	echo "Aliases are effectively symlinks stored in $CONFIG_ALIASES"
 }
@@ -1265,13 +1278,29 @@ show_help_config ()
 show_help_cleanup ()
 {
 	echo-green "Perform a cleanup"
-	printh "fin cleaup [--hard]" "" "yellow"
+	printh "fin cleanup [--hard]" "" "yellow"
 	echo
 	printh "Removes unused docker images to save disk space on VM."
 	printh "Removes orphaned containers. Orphaned are those, which folders were deleted on filesystem"
 	printh "without removing their containers with 'fin rm' first."
 	echo-green "Parameters:"
 	printh "--hard" "Also remove all stopped containers (potentially destructive operation)"
+	echo
+}
+
+show_help_hosts ()
+{
+	echo-green "Can add/remove lines to/from OS-dependent hosts file"
+	printh "fin hosts <command>" "" "yellow"
+	echo
+	printh "Always uses $DOCKSAL_DEFAULT_IP for IP."
+	echo-green "Commands:"
+	printh "add <hostname>" "Add hostname to hosts file"
+	printh "remove <hostname>" "Remove all lines containing hostname from hosts file"
+	printh "list (or no command)" "Output hosts file"
+	echo-green "Examples:"
+	printh "fin hosts add demo.docksal" "Append a line '$DOCKSAL_DEFAULT_IP demo.docksal' to hosts file"
+	printh "fin hosts" "Output hosts file"
 	echo
 }
 
@@ -1858,6 +1887,9 @@ vm ()
 		hdd)
 			shift
 			vm-hdd "$@"
+			;;
+		help)
+			show_help_vm
 			;;
 		*)
 			echo-error "Unknown command fin vm $1" "See ${yellow}fin help vm${NC} for list of available commands"
@@ -3120,7 +3152,9 @@ mysql_import ()
 	fi
 
 	#-- 2) IMPORTING
-	echo "Importing..."
+	[[ "$__input" != "/dev/fd/0" ]] &&
+		echo "Importing..." ||
+		echo "Importing from stdin..." ||
 	# We can not use _run here because we need to launch docker exec with only -i param
 	# and only mysql command direclty (no bash wrapper) so that stdin could be received inside that exec
 	container_id=$(get_container_id "db")
@@ -3595,6 +3629,77 @@ config_generate ()
 	fi
 }
 
+# Can add or remove a host to/from hosts file
+hosts ()
+{
+	is_windows && HOSTS_FILE="/c/windows/system32/drivers/etc/hosts"
+	is_mac && HOSTS_FILE="/etc/hosts"
+	is_linux && HOSTS_FILE="/etc/hosts"
+	case "$1" in
+		add)
+			shift
+			hosts_add "$1"
+			;;
+		remove)
+			shift
+			hosts_remove "$1"
+			;;
+		'')
+			cat "$HOSTS_FILE"
+			;;
+		*)
+			echo "Usage: fin host < add | remove > [ hostname ]"
+			;;
+	esac
+}
+
+hosts_add ()
+{
+	[ "$1" == "" ] && echo-error "Hostname was not provided" && exit 1
+	[[ ! "$1" =~ "." ]] && echo-error "Hostname should contain '.'" && exit 1
+
+	hosts_backup
+	echo "Adding: $DOCKSAL_DEFAULT_IP $1"
+	if is_windows; then
+		local tmp="/tmp/hosts.bak.$RANDOM"
+		cp "$HOSTS_FILE" "$tmp"
+		echo "$DOCKSAL_DEFAULT_IP $1" | tee -a "$tmp" >/dev/null
+		unix2dos -q "$tmp"
+		winsudo "copy /Y $(cygpath -w ${tmp}) $(cygpath -w ${HOSTS_FILE}) && erase $(cygpath -w ${tmp})"
+	else
+		echo "$DOCKSAL_DEFAULT_IP $1" | sudo tee -a "$HOSTS_FILE" >/dev/null
+	fi
+}
+
+hosts_remove ()
+{
+	[ "$1" == "" ] && echo-error "Hostname was not provided" && exit 1
+	[[ ! "$1" =~ "." ]] && echo-error "Hostname should contain '.'" && exit 1
+	# Double insurance from removing lines containing localhost or broadcasthost as it may damage system
+	[[ "$1" =~ "localhost" ]] && echo-error "Cannot remove localhost" && exit 1
+	[[ "$1" =~ "broadcasthost" ]] && echo-error "Cannot remove broadcasthost" && exit 1
+
+	hosts_backup
+	echo "Removing '$1'..."
+	if is_windows; then
+		local tmp="/tmp/hosts.bak.$RANDOM"
+		cp "$HOSTS_FILE" "$tmp"
+		cat "$HOSTS_FILE" | grep -v "$1" | sudo tee "$tmp" >/dev/null
+		unix2dos -q "$tmp"
+		winsudo "copy /Y $(cygpath -w ${tmp}) $(cygpath -w ${HOSTS_FILE}) && erase $(cygpath -w ${tmp})"
+	else
+		cat "$HOSTS_FILE" | grep -v "$1" | sudo tee "$HOSTS_FILE" >/dev/null
+	fi
+}
+
+hosts_backup ()
+{
+	local bkp="/tmp/hosts.bak.$RANDOM"
+	echo "Backing up to $bkp"
+	sudo cp "$HOSTS_FILE" "$bkp"
+}
+
+
 #-------------------------- RUNTIME STARTS HERE ----------------------------
 
 # Override PATH to use our utilities
@@ -3736,6 +3841,13 @@ case "$1" in
 				shift
 				image_registry_list "$@"
 			;;
+			'')
+				echo -e "See ${yellow}fin help image${NC}"
+				exit 1
+				;;
+			help)
+				show_help_image
+				;;
 			*)
 				echo -e "Unknown command $1. See ${yellow}fin help image${NC}"
 				exit 1
@@ -3751,6 +3863,13 @@ case "$1" in
 			list)
 				shift
 				project_list "$@"
+				;;
+			'')
+				echo -e "See ${yellow}fin help project${NC}"
+				exit 1
+				;;
+			help)
+				show_help_project
 				;;
 			*)
 				echo -e "Unknown command $1. See ${yellow}fin help project${NC}"
@@ -3822,6 +3941,7 @@ case "$1" in
 		shift
 		run_cli "$@"
 		;;
+	# TODO: Remove mysql and sql* commands in fin 2.0
 	mysql|sqlc)
 		shift
 		mysql "$@"
@@ -3837,6 +3957,30 @@ case "$1" in
 	mysql-dump|sqld)
 		shift
 		mysql_dump "$@"
+		;;
+	db)
+		shift
+		case "$1" in
+			cli)
+				shift
+				mysql "$@"
+				;;
+			list|ls)
+				shift
+				mysql_list "$@"
+				;;
+			import)
+				shift
+				mysql_import "$@"
+				;;
+			dump)
+				shift
+				mysql_dump "$@"
+				;;
+			*)
+				mysql "$@"
+				;;
+		esac
 		;;
 	drush)
 		shift
@@ -3940,15 +4084,19 @@ case "$1" in
 		echo -e "${yellow}Notice:${NC} create-site is deprecated and will be removed. Use ${yellow}fin project create${NC} instead."
 		project_create
 		;;
-	init|*)
+	hosts)
+		shift
+		hosts "$@"
+		;;
+	*)
 		# Search for custom commands in $DOCKSAL_COMMANDS_PATH
 		# First search project commands folder
 		command_script="$(get_project_path)/$DOCKSAL_COMMANDS_PATH/$1"
 		# If not found search global docksal commands folder
 		[ ! -f "$command_script" ] && command_script="$HOME/$DOCKSAL_COMMANDS_PATH/$1"
 		# If not found there as well then it is a wrong command
-		[ ! -f "$command_script" ] && \
-			echo-yellow "Unknown command '$*'. See 'fin help' for list of available commands" && \
+		[ ! -f "$command_script" ] &&
+			echo-yellow "Unknown command '$*'. See 'fin help' for list of available commands" &&
 			exit 1
 
 		# if it's not executable let's fix it
